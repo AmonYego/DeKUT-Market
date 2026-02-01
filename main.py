@@ -16,7 +16,7 @@ from fastapi import UploadFile, File, Form
 import os
 from dotenv import load_dotenv
 from urllib.parse import urlparse
-from passlib.hash import bcrypt
+import bcrypt
 
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -339,14 +339,18 @@ def upsert_profile(profile: ProfileSchema, db: Session = Depends(get_db)):
         existing.full_name = profile.fullName
         existing.phone = profile.phone
         if profile.password:
-            existing.password = bcrypt.hash(profile.password)
+            # Bcrypt has a 72-byte limit; truncate to be safe
+            pwd_bytes = profile.password.encode('utf-8')
+            if len(pwd_bytes) > 72:
+                pwd_bytes = pwd_bytes[:72]
+            existing.password = bcrypt.hashpw(pwd_bytes, bcrypt.gensalt()).decode('utf-8')
     else:
         db_profile = ProfileDB(
             id=profile.id,
             full_name=profile.fullName,
             email=profile.email.lower(),
             phone=profile.phone,
-            password=bcrypt.hash(profile.password) if profile.password else None
+            password=bcrypt.hashpw(profile.password.encode('utf-8')[:72], bcrypt.gensalt()).decode('utf-8') if profile.password else None
         )
         db.add(db_profile)
 
@@ -368,7 +372,7 @@ def login(data: LoginSchema, db: Session = Depends(get_db)):
     if not p.password:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     try:
-        if not bcrypt.verify(data.password, p.password):
+        if not bcrypt.checkpw(data.password.encode('utf-8')[:72], p.password.encode('utf-8')):
             raise HTTPException(status_code=401, detail="Invalid email or password")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid email or password")
