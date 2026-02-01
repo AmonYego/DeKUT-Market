@@ -7,3 +7,4 @@ supabase
 python-multipart
 psycopg2
 passlib
+bcrypt
