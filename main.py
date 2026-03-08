@@ -334,33 +334,48 @@ def get_profile_by_email(email: str, db: Session = Depends(get_db)):
 
 @app.post("/profiles")
 def upsert_profile(profile: ProfileSchema, db: Session = Depends(get_db)):
-    existing = db.query(ProfileDB).filter(ProfileDB.id == profile.id).first()
-    if existing:
-        existing.full_name = profile.fullName
-        existing.phone = profile.phone
-        if profile.password:
-            # Bcrypt has a 72-byte limit; truncate to be safe
+    try:
+        # Validate password is provided for new profiles
+        if not profile.password:
+            raise HTTPException(status_code=400, detail="Password is required for new profiles")
+        
+        existing = db.query(ProfileDB).filter(ProfileDB.id == profile.id).first()
+        if existing:
+            existing.full_name = profile.fullName
+            existing.phone = profile.phone
+            if profile.password:
+                # Bcrypt has a 72-byte limit; truncate to be safe
+                pwd_bytes = profile.password.encode('utf-8')
+                if len(pwd_bytes) > 72:
+                    pwd_bytes = pwd_bytes[:72]
+                existing.password = bcrypt.hashpw(pwd_bytes, bcrypt.gensalt()).decode('utf-8')
+        else:
+            # Hash password for new profile
+            if not profile.password:
+                raise HTTPException(status_code=400, detail="Password is required")
+            
             pwd_bytes = profile.password.encode('utf-8')
             if len(pwd_bytes) > 72:
                 pwd_bytes = pwd_bytes[:72]
-            existing.password = bcrypt.hashpw(pwd_bytes, bcrypt.gensalt()).decode('utf-8')
-    else:
-        db_profile = ProfileDB(
-            id=profile.id,
-            full_name=profile.fullName,
-            email=profile.email.lower(),
-            phone=profile.phone,
-            password=bcrypt.hashpw(profile.password.encode('utf-8')[:72], bcrypt.gensalt()).decode('utf-8') if profile.password else None
-        )
-        db.add(db_profile)
+            hashed_pwd = bcrypt.hashpw(pwd_bytes, bcrypt.gensalt()).decode('utf-8')
+            
+            db_profile = ProfileDB(
+                id=profile.id,
+                full_name=profile.fullName,
+                email=profile.email.lower(),
+                phone=profile.phone,
+                password=hashed_pwd
+            )
+            db.add(db_profile)
 
-    try:
         db.commit()
+        return {"status": "ok", "message": "Profile saved successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return {"status": "ok"}
+        print(f"ERROR in upsert_profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save profile: {str(e)}")
 
 
 @app.post("/login")
